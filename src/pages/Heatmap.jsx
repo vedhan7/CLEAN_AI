@@ -2,25 +2,45 @@ import React, { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Flame } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 export default function Heatmap() {
   const [complaints, setComplaints] = useState([]);
 
   useEffect(() => {
-    // Generate mock complaints for the heatmap around Madurai
-    const center = [9.9252, 78.1198];
-    const mockData = Array.from({ length: 300 }, (_, i) => {
-      const radius = 0.08 * Math.sqrt(Math.random());
-      const theta = Math.random() * 2 * Math.PI;
-      return {
-        id: i,
-        lat: center[0] + radius * Math.cos(theta),
-        lng: center[1] + radius * Math.sin(theta),
-        severity: Math.random() > 0.8 ? 'critical' : Math.random() > 0.4 ? 'high' : 'medium'
-      };
-    });
-     /* eslint-disable-next-line */
-    setComplaints(mockData);
+    const fetchHeatmapData = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('complaints')
+          .select('id, lat, lng, priority')
+          .neq('status', 'resolved');
+
+        if (error) throw error;
+
+        if (data) {
+          setComplaints(data.map(c => ({
+            id: c.id,
+            lat: c.lat,
+            lng: c.lng,
+            severity: c.priority || 'medium'
+          })));
+        }
+      } catch (err) {
+        console.error("Error fetching live heatmap data:", err);
+      }
+    };
+
+    fetchHeatmapData();
+
+    // Setup real-time subscription for live map pop-ins
+    const subscription = supabase
+      .channel('public:complaints:heatmap')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, fetchHeatmapData)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
   }, []);
 
   const maduraiCenter = [9.9252, 78.1198];

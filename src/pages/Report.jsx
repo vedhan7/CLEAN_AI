@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
-import { MapPin, Camera, AlertTriangle, Send, Loader2, Image as ImageIcon, X } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap, GeoJSON } from 'react-leaflet';
+import { MapPin, Camera, AlertTriangle, Send, Loader2, Image as ImageIcon, X, Navigation, Crosshair, UserCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import councillorData from '../data/councillors.json';
 
 // Fix for default Leaflet icon
 delete L.Icon.Default.prototype._getIconUrl;
@@ -22,9 +23,29 @@ function LocationMarker({ position, setPosition }) {
     },
   });
 
+  // Effect to automatically fly to position if it's updated from the outside (like GPS)
+  React.useEffect(() => {
+    if (position && position.fromGPS) {
+      map.flyTo(position, 16);
+    }
+  }, [position, map]);
+
   return position === null ? null : (
     <Marker position={position}></Marker>
   );
+}
+
+// Ray-casting algorithm to determine if a point is inside a polygon
+function pointInPolygon(point, vs) {
+  const x = point[0], y = point[1];
+  let inside = false;
+  for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+    const xi = vs[i][0], yi = vs[i][1];
+    const xj = vs[j][0], yj = vs[j][1];
+    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 export default function Report() {
@@ -33,7 +54,116 @@ export default function Report() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [trackingId, setTrackingId] = useState('');
+  const [isLocating, setIsLocating] = useState(false);
+
+  const [geoData, setGeoData] = useState(null);
+  const [matchedWard, setMatchedWard] = useState(null);
+  const [matchedCouncillor, setMatchedCouncillor] = useState(null);
+
   const fileInputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    fetch('/madurai-wards.geojson')
+      .then(res => res.json())
+      .then(data => setGeoData(data))
+      .catch(err => console.error('Failed to load geojson', err));
+  }, []);
+
+  const onEachWard = (feature, layer) => {
+    layer.on({
+      click: (e) => {
+        const wardId = feature.properties.id;
+        setMatchedWard(wardId);
+
+        // Auto-fetch councillor
+        const cData = councillorData.find(c => c.id === wardId);
+        setMatchedCouncillor(cData || null);
+
+        // Optional: Also auto-drop the pin where they clicked
+        setPosition({ lat: e.latlng.lat, lng: e.latlng.lng, fromGPS: false });
+      },
+      mouseover: (e) => {
+        const target = e.target;
+        target.setStyle({ weight: 3, color: 'var(--c-emerald)', fillOpacity: 0.1 });
+      },
+      mouseout: (e) => {
+        const target = e.target;
+        target.setStyle({ weight: 1, color: 'rgba(0,0,0,0)', fillOpacity: 0 }); // Invisible until hovered/clicked
+      }
+    });
+  };
+
+  // Ray cast the position whenever it changes (e.g. from GPS)
+  React.useEffect(() => {
+    if (!position || !geoData) return;
+
+    // GeoJSON coordinates are [longitude, latitude]
+    const pt = [position.lng, position.lat];
+    let foundWardId = null;
+    let closestWardId = null;
+    let minDistance = Infinity;
+
+    for (const feature of geoData.features) {
+      if (feature.geometry && feature.geometry.coordinates) {
+        // Handle Polygon (assuming standard GeoJSON Polygon format where coordinates[0] is the outer boundary)
+        const polyCoords = feature.geometry.coordinates[0];
+        if (pointInPolygon(pt, polyCoords)) {
+          foundWardId = feature.properties.id;
+          break;
+        }
+
+        // Find closest ward in case the pin is placed slightly outside the boundaries
+        const firstPt = polyCoords[0];
+        const dist = Math.pow(pt[0] - firstPt[0], 2) + Math.pow(pt[1] - firstPt[1], 2);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestWardId = feature.properties.id;
+        }
+      }
+    }
+
+    const targetWard = foundWardId || closestWardId;
+
+    if (targetWard) {
+      setMatchedWard(targetWard);
+      const cData = councillorData.find(c => c.id === targetWard);
+      if (cData) {
+        setMatchedCouncillor(cData);
+      } else {
+        setMatchedCouncillor(null);
+      }
+    } else {
+      setMatchedWard(null);
+      setMatchedCouncillor(null);
+    }
+  }, [position, geoData]);
+
+  const handleDetectLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation is not supported by your browser.');
+      return;
+    }
+
+    setIsLocating(true);
+    const loadingToast = toast.loading('Acquiring GPS signal...');
+
+    navigator.geolocation.getCurrentPosition(
+      (loc) => {
+        setPosition({ lat: loc.coords.latitude, lng: loc.coords.longitude, fromGPS: true });
+        toast.success('Location pinpointed!', { id: loadingToast });
+        setIsLocating(false);
+      },
+      (err) => {
+        setIsLocating(false);
+        if (err.code === 1) {
+          toast.error('Location permission denied. Please enable GPS in your browser settings.', { id: loadingToast, duration: 4000 });
+        } else {
+          toast.error('Failed to get location: ' + err.message, { id: loadingToast });
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
@@ -59,7 +189,6 @@ export default function Report() {
     try {
       let imageUrl = null;
 
-      // Step 1: Upload Photo to Supabase Storage (if attached)
       if (form.photo) {
         toast.loading('Uploading evidence...', { id: loadingToast });
         const fileExt = form.photo.name.split('.').pop();
@@ -83,8 +212,7 @@ export default function Report() {
 
       toast.loading('Locating nearest LCV dispatch...', { id: loadingToast });
 
-      // Step 2: Assign a static 'Ward' ID based on lat/lng for MVP demo purposes
-      const mockWardId = Math.random() > 0.5 ? 41 : 42;
+      const finalWardId = matchedWard || 42; // Fallback to 42 if outside bounding box
 
       // Step 3: Push accurate complaint to database
       const { data, error } = await supabase
@@ -94,7 +222,7 @@ export default function Report() {
           description: form.description,
           lat: position.lat,
           lng: position.lng,
-          ward_id: mockWardId,
+          ward_id: finalWardId,
           image_url: imageUrl
         }])
         .select('id')
@@ -147,16 +275,52 @@ export default function Report() {
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
 
           <div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', fontWeight: 600 }}>
-              <MapPin size={18} color="var(--c-emerald)" /> Location (Tap on map to place pin)
-            </label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                <MapPin size={18} color="var(--c-emerald)" /> Location
+              </label>
+              <button
+                type="button"
+                onClick={handleDetectLocation}
+                disabled={isLocating}
+                style={{ background: 'rgba(0, 214, 143, 0.1)', color: 'var(--c-emerald)', border: '1px solid var(--c-emerald)', padding: '6px 12px', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: isLocating ? 'not-allowed' : 'pointer', opacity: isLocating ? 0.7 : 1 }}
+              >
+                {isLocating ? <Loader2 size={14} className="animate-spin" /> : <Crosshair size={14} />}
+                {isLocating ? 'Detecting...' : 'Use My GPS'}
+              </button>
+            </div>
             <div style={{ height: '300px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--glass-border)' }}>
               <MapContainer center={[9.9252, 78.1198]} zoom={13} style={{ height: '100%', width: '100%' }}>
                 <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+                {geoData && (
+                  <GeoJSON
+                    data={geoData}
+                    onEachFeature={onEachWard}
+                    style={{ weight: 1, color: 'rgba(0,0,0,0)', fillOpacity: 0 }} // Keep wards invisible until hovered
+                  />
+                )}
                 <LocationMarker position={position} setPosition={setPosition} />
               </MapContainer>
             </div>
-            {position && <p style={{ fontSize: '0.85rem', color: 'var(--c-gray-400)', marginTop: '8px' }}>Selected GeoCoords: {position.lat.toFixed(4)}, {position.lng.toFixed(4)}</p>}
+            <p style={{ fontSize: '0.85rem', color: 'var(--c-gray-400)', marginTop: '8px' }}>
+              {position ? `Selected GeoCoords: ${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}` : 'Click on your Ward Area on the map to auto-fetch Councillor Details'}
+            </p>
+          </div>
+
+          <div>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>Assigned Ward Counselor</label>
+            <input
+              id="assigned-counselor"
+              type="text"
+              readOnly
+              value={
+                matchedCouncillor
+                  ? `Ward ${matchedWard} - ${matchedCouncillor.councillor_name}`
+                  : (position ? 'Outside Service Area' : '')
+              }
+              placeholder="Select a location to auto-fetch counselor..."
+              style={{ width: '100%', padding: '12px', background: 'var(--c-midnight-light)', border: '1px solid var(--glass-border)', color: 'var(--c-emerald)', borderRadius: 'var(--radius-sm)', outline: 'none', fontWeight: 'bold' }}
+            />
           </div>
 
           <div>
