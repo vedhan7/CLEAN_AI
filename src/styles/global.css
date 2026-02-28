@@ -1,0 +1,33 @@
+:root {
+    --c-midnight: #0B0F19;
+    --c-midnight-light: #161b22;
+    --c-midnight-lighter: #1c2333;
+    --c-emerald: #0DF39A;
+    --c-emerald-dim: rgba(13, 243, 154, 0.15);
+    --c-saffron: #FFB703;
+    --c-rose: #F43F5E;
+    --c-gray-300: #D1D5DB;
+    --c-gray-400: #9CA3AF;
+    --c-gray-500: #6B7280;
+    --glass-bg: rgba(22, 27, 34, 0.6);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-blur: blur(16px);
+}
+
+body {
+    margin: 0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: var(--c-midnight);
+    color: #ffffff;
+    -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.font-display {
+    font-family: 'Outfit', 'Inter', system-ui, sans-serif;
+}

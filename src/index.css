@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* Global styles and CSS variables */
+@import "./styles/global.css";
+@import "./styles/components.css";
+@import "./styles/animations.css";
+@import "./styles/responsive.css";
+@import "./styles/map-overrides.css";

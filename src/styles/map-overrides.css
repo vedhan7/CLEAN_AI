@@ -1,0 +1,24 @@
+/* Leaflet Overrides for Dark Mode */
+.leaflet-container {
+    background-color: var(--c-midnight) !important;
+    font-family: inherit !important;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+    background: var(--glass-bg) !important;
+    color: white !important;
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
+}
+
+.leaflet-control-zoom a {
+    background-color: var(--c-midnight-light) !important;
+    color: var(--c-gray-300) !important;
+    border-color: var(--glass-border) !important;
+}
+
+.leaflet-control-zoom a:hover {
+    background-color: var(--c-midnight-lighter) !important;
+    color: white !important;
+}
